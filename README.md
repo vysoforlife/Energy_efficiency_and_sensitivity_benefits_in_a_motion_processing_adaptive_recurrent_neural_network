@@ -21,7 +21,7 @@ You can use the pre-trained models provided in the `Trained_Models` folder, or y
 - **Training scripts**
   - `AdaptNet.py` : Defines the adaptive network architecture
   - `MotionNet-R.py` : Defines the baseline recurrent network architecture
-  - `Combined_Training.py` : Provides a top-level script to train either MotionNet-R or AdaptNet
+  - `Combined_Training.py` : Provides a top-level script to train both MotionNet-R and AdaptNet
 
 **To train a new model**, ensure that the training image sequences are placed in a peer folder named `Training_Data` (or as indicated by the script parameters), located in the parent directory. Then, run `Combined_Training.py` to generate both model types (MotionNet-R and AdaptNet).
 
