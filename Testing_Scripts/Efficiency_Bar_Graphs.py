@@ -12,11 +12,21 @@ from tqdm import tqdm
 import matplotlib.font_manager as font_manager
 from scipy import stats
 
+############################################
+# DEVICE CONFIGURATION
+############################################
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
 
+############################################
+# STATISTICAL TEST FUNCTION
+############################################
 def perform_t_test(data1, data2, label):
+    """
+    Perform an independent two-sample t-test between data1 and data2 arrays,
+    print out results and significance level.
+    """
     t_statistic, p_value = stats.ttest_ind(data1, data2)
     print(f"\nIndependent t-test results for {label}:")
     print(f"t-statistic: {t_statistic}")
@@ -38,16 +48,31 @@ def perform_t_test(data1, data2, label):
     else:
         print("The difference is not statistically significant")
 
+
+############################################
+# STIMULUS GENERATION
+############################################
 def generate_moving_dot_sequence(initial_x_speed, initial_y_speed, dot_radius, num_frames, im_height, im_width,
                                  change_mode=False, num_changes=0, timesteps_between_changes=0, change_speeds=None):
+    """
+    Generate a moving dot stimulus. The dot moves on a 2D plane (wrapped around edges).
+    If change_mode=True, the speed changes at specified intervals.
+
+    Returns:
+    - network_input: Tensor of shape (1, num_frames-1, 2, im_height, im_width)
+      containing pairs of consecutive frames as input.
+    - change_points: The frames at which speed changes occur.
+    """
     sequence = torch.zeros(num_frames, im_height, im_width)
 
+    # Initial position (center of the image)
     x = im_width // 2
     y = im_height // 2
 
     x_speed = initial_x_speed
     y_speed = initial_y_speed
 
+    # Determine points in time where speed changes occur
     change_points = []
     if change_mode and num_changes > 0:
         change_points = [i * timesteps_between_changes for i in range(1, num_changes + 1)]
@@ -56,42 +81,41 @@ def generate_moving_dot_sequence(initial_x_speed, initial_y_speed, dot_radius, n
 
     change_index = 0
     for t in range(num_frames):
+        # If it's time to change speed
         if change_mode and change_index < len(change_points) and t == change_points[change_index]:
             x_speed, y_speed = change_speeds[change_index]
             change_index += 1
 
+        # Update position with wrap-around
         x = (x + x_speed) % im_width
         y = (y + y_speed) % im_height
 
         yy, xx = torch.meshgrid(torch.arange(im_height), torch.arange(im_width))
-
         dx = torch.min(torch.abs(xx - x), im_width - torch.abs(xx - x))
         dy = torch.min(torch.abs(yy - y), im_height - torch.abs(yy - y))
-
         d = torch.sqrt(dx ** 2 + dy ** 2)
 
+        # Create a circular dot
         dot = (d <= dot_radius).float() * 255
-
         sequence[t] = dot
 
+    # Create the network input by pairing consecutive frames
     network_input = torch.zeros(num_frames - 1, 2, im_height, im_width)
     for i in range(num_frames - 1):
         network_input[i, 0] = sequence[i]
         network_input[i, 1] = sequence[i + 1]
 
     network_input = network_input.unsqueeze(0)
-
     return network_input, change_points
 
 
-# Example usage:
+# Example usage of sequence generation (for demonstration)
 x_speed = 2
 y_speed = 1
 dot_radius = 3
 num_frames = 40
 im_height = 32
 im_width = 32
-
 change_mode = True
 num_changes = 3
 timesteps_between_changes = 10
@@ -101,11 +125,13 @@ input_sequence, change_points = generate_moving_dot_sequence(
     x_speed, y_speed, dot_radius, num_frames, im_height, im_width,
     change_mode, num_changes, timesteps_between_changes, change_speeds
 )
-
 print(f"Change points: {change_points}")
-
 input_sequence = input_sequence.to(device)
 
+
+############################################
+# MODEL PARAMETERS
+############################################
 im_size = 32
 num_of_frames = 40
 batch_size = 32
@@ -116,8 +142,17 @@ rnn_units = 16
 act_size = 27
 
 
-# Base RNN class for the first model
+############################################
+# RNN MODEL DEFINITIONS
+############################################
+
+# Base RNN class (no adaptation)
 class SimpleRNN_n(nn.Module):
+    """
+    Simple RNN without adaptation.
+    h_t = activation(W_ih * x_t + b_ih + W_hh * h_(t-1) + b_hh)
+    Nonlinearity: ReLU or Tanh
+    """
     def __init__(self, input_size, hidden_size, nonlinearity='relu', bias=True, batch_first=False):
         super(SimpleRNN_n, self).__init__()
         self.input_size = input_size
@@ -145,11 +180,13 @@ class SimpleRNN_n(nn.Module):
             raise ValueError("Unknown nonlinearity. Supported: 'tanh', 'relu'")
 
     def reset_parameters(self):
+        # Uniform initialization
         stdv = 1.0 / math.sqrt(self.hidden_size)
         for weight in self.parameters():
             nn.init.uniform_(weight, -stdv, stdv)
 
     def forward(self, x, hx=None):
+        # If batch_first: (batch, seq, feature) -> (seq, batch, feature)
         if self.batch_first:
             x = x.transpose(0, 1)
 
@@ -175,8 +212,13 @@ class SimpleRNN_n(nn.Module):
         return output, hx
 
 
-# Adaptive RNN class for the second model
+# Adaptive RNN class
 class SimpleRNN(nn.Module):
+    """
+    RNN with adaptation:
+    adapted_activation = max(0, pre_activation - adaptation)
+    adaptation updated each timestep.
+    """
     def __init__(self, input_size, hidden_size, nonlinearity='relu', bias=True, batch_first=False,
                  adaptation_rate=0.2, recovery_rate=0.1):
         super(SimpleRNN, self).__init__()
@@ -212,6 +254,7 @@ class SimpleRNN(nn.Module):
             nn.init.uniform_(weight, -stdv, stdv)
 
     def forward(self, x, hx=None):
+        # If batch_first: transpose input
         if self.batch_first:
             x = x.transpose(0, 1)
 
@@ -233,14 +276,19 @@ class SimpleRNN(nn.Module):
             output.append(hx)
 
         output = torch.stack(output, dim=0)
-
         if self.batch_first:
             output = output.transpose(0, 1)
 
         return output, hx
 
 
+############################################
+# ADAPTIVE LAYER
+############################################
 class AdaptiveLayer(nn.Module):
+    """
+    Applies per-frame adaptation before passing into the RNN.
+    """
     def __init__(self, num_features, adaptation_rate=0.1, recovery_rate=0.1):
         super(AdaptiveLayer, self).__init__()
         self.adaptation_rate = adaptation_rate
@@ -248,6 +296,7 @@ class AdaptiveLayer(nn.Module):
         self.adaptation = nn.Parameter(torch.zeros(1, num_features), requires_grad=False)
 
     def forward(self, x):
+        # x: [batch_size, num_frames, num_features]
         batch_size, num_frames, num_features = x.size()
         adaptation = self.adaptation.expand(batch_size, -1)
 
@@ -259,12 +308,23 @@ class AdaptiveLayer(nn.Module):
             adaptation = adaptation * (1 - self.recovery_rate)
             adapted_output.append(output)
 
+        # Store mean adaptation state
         self.adaptation.data = adaptation.mean(dim=0, keepdim=True)
         return torch.stack(adapted_output, dim=1)
 
 
-# First model (Normal)
+############################################
+# MODEL DEFINITIONS
+############################################
+
+# First model (No adaptation)
 class Model_n(nn.Module):
+    """
+    Architecture:
+    - Conv2D -> Flatten -> ReLU
+    - SimpleRNN_n
+    - FC -> 2 units
+    """
     def __init__(self):
         super(Model_n, self).__init__()
 
@@ -283,6 +343,7 @@ class Model_n(nn.Module):
         self.apply(init_weights)
 
     def forward(self, x):
+        # x: (batch, num_frames, 2, im_height, im_width)
         batch_size, num_frames, _, _, _ = x.size()
         out_conv = torch.stack([self.conv(x[:, i]) for i in range(num_frames)], dim=1)
         out_flat = torch.stack([self.flatten(out_conv[:, i]) for i in range(num_frames)], dim=1)
@@ -291,8 +352,15 @@ class Model_n(nn.Module):
         return out_fc, out_conv, out_flat, out_rnn
 
 
-# Second model (Adaptive)
+# Second model (With adaptation)
 class Model(nn.Module):
+    """
+    Architecture:
+    - Conv2D -> Flatten -> ReLU
+    - AdaptiveLayer
+    - SimpleRNN with adaptation
+    - FC -> 2 units
+    """
     def __init__(self):
         super(Model, self).__init__()
 
@@ -327,7 +395,15 @@ class Model(nn.Module):
         return out_fc, out_conv, out_flat, out_rnn
 
 
+############################################
+# ANALYSIS FUNCTIONS
+############################################
+
 def analyze_responsiveness_and_efficiency(predictions, true_speeds, change_points, window_size=3, threshold=0.1):
+    """
+    Analyze how quickly and effectively the model responds to speed changes.
+    Measures include response time, settling time, overshoot, MSE, efficiency, etc.
+    """
     individual_results = []
     overall_results = {
         'avg_response_time': 0,
@@ -343,7 +419,6 @@ def analyze_responsiveness_and_efficiency(predictions, true_speeds, change_point
     }
 
     true_speeds_aligned = true_speeds[1:]
-
     total_prediction_magnitude = np.sum(np.abs(predictions))
     prediction_energy = np.sum(predictions ** 2)
     num_frames = len(predictions)
@@ -351,6 +426,7 @@ def analyze_responsiveness_and_efficiency(predictions, true_speeds, change_point
     correct_changes = 0
     total_changes = 0
 
+    # For each change point, analyze model response
     for i, change_point in enumerate(change_points):
         old_speed = true_speeds[change_point - 1]
         new_speed = true_speeds[change_point]
@@ -362,15 +438,17 @@ def analyze_responsiveness_and_efficiency(predictions, true_speeds, change_point
         pred_window = pred_window[:min_length]
         true_window = true_window[:min_length]
 
+        # Response time: how long until prediction is within threshold of new speed
         response_time = next((i for i, p in enumerate(pred_window) if abs(p - new_speed) <= threshold), min_length)
 
+        # Settling time: how long until it stays within threshold for the rest of the window
         settling_time = next((i for i in range(len(pred_window))
                               if all(abs(p - new_speed) <= threshold for p in pred_window[i:])), min_length)
 
         overshoot = max(abs(p - new_speed) for p in pred_window)
-
         mse = np.mean((pred_window - true_window) ** 2)
 
+        # Check direction of change correctness
         if i > 0:
             pred_change = predictions[change_point - 1] - predictions[change_point - 2]
             true_change = new_speed - old_speed
@@ -409,22 +487,32 @@ def analyze_responsiveness_and_efficiency(predictions, true_speeds, change_point
 
 
 def generate_change_combinations(num_changes, speed_range):
+    """
+    Generate all combinations of speeds for a given number of changes.
+    Returns a list of tuples, each representing speeds at each interval.
+    """
     speeds = list(range(speed_range[0], speed_range[1] + 1))
     return list(itertools.product(speeds, repeat=num_changes + 1))
 
 
 def calculate_total_change_magnitude(speeds):
+    """
+    Calculate the sum of absolute differences between consecutive speeds.
+    """
     return sum(abs(speeds[i + 1] - speeds[i]) for i in range(len(speeds) - 1))
 
 
 def generate_moving_dot_sequence_batch(initial_speeds, change_speeds, dot_radius, num_frames, im_height, im_width,
                                        timesteps_between_changes):
+    """
+    Generate a batch of moving dot sequences for multiple initial and change speeds.
+    Returns a batch of shape (batch_size, num_frames-1, 2, im_height, im_width).
+    """
     batch_size = len(initial_speeds)
     network_input = torch.zeros(batch_size, num_frames - 1, 2, im_height, im_width, device=device)
 
     x = torch.tensor([speed[0] for speed in initial_speeds], device=device).float()
     y = torch.tensor([speed[1] for speed in initial_speeds], device=device).float()
-
     speeds = torch.tensor(initial_speeds, device=device).float()
 
     yy, xx = torch.meshgrid(torch.arange(im_height, device=device), torch.arange(im_width, device=device))
@@ -432,6 +520,7 @@ def generate_moving_dot_sequence_batch(initial_speeds, change_speeds, dot_radius
     yy = yy.unsqueeze(0).expand(batch_size, -1, -1)
 
     for t in range(num_frames):
+        # After certain intervals, update speeds
         if t > 0 and t % timesteps_between_changes == 0:
             change_idx = t // timesteps_between_changes - 1
             if change_idx < len(change_speeds[0]):
@@ -457,6 +546,10 @@ def generate_moving_dot_sequence_batch(initial_speeds, change_speeds, dot_radius
 
 
 def batch_forward(model, x):
+    """
+    Forward pass for a batch of sequences.
+    x: (batch_size, num_frames-1, 2, 32, 32)
+    """
     batch_size, num_frames, _, _, _ = x.size()
     out_conv = model.conv(x.view(-1, 2, 32, 32)).view(batch_size, num_frames, -1)
     out_flat = model.flatten(out_conv)
@@ -467,6 +560,9 @@ def batch_forward(model, x):
 
 def run_simulation_batch(models, initial_speeds, change_speeds, num_frames, im_height, im_width, dot_radius,
                          timesteps_between_changes):
+    """
+    Run a simulation for a batch of sequences through multiple models and average predictions.
+    """
     input_sequence = generate_moving_dot_sequence_batch(
         initial_speeds, change_speeds, dot_radius, num_frames, im_height, im_width, timesteps_between_changes
     )
@@ -485,6 +581,9 @@ def run_simulation_batch(models, initial_speeds, change_speeds, num_frames, im_h
 
 
 def calculate_mse(predictions, true_speeds, change_points, window_size):
+    """
+    Calculate MSE around given change points over a specified window size.
+    """
     mse_values = []
     for change_point in change_points:
         pred_window = predictions[change_point:change_point + window_size]
@@ -495,13 +594,18 @@ def calculate_mse(predictions, true_speeds, change_points, window_size):
 
 
 def plot_sequence(sequence, predictions_set1, predictions_set2, true_speeds, title):
+    """
+    Plot the first frame of the sequence, speed predictions over time, and resulting trajectories.
+    """
     fig, axes = plt.subplots(1, 3, figsize=(20, 5))
     fig.suptitle(title)
 
+    # Show first frame
     axes[0].imshow(sequence[0, 0].cpu().numpy(), cmap='gray')
     axes[0].set_title('Input Sequence (First Frame)')
     axes[0].axis('off')
 
+    # Plot speed predictions vs true speeds
     t = np.arange(len(predictions_set1))
     axes[1].plot(t, predictions_set1[:, 0], 'b-', label='Motionnet-R X')
     axes[1].plot(t, predictions_set1[:, 1], 'g-', label='Motionnet-R Y')
@@ -514,6 +618,7 @@ def plot_sequence(sequence, predictions_set1, predictions_set2, true_speeds, tit
     axes[1].legend()
     axes[1].set_title('Speed Predictions')
 
+    # Plot trajectories
     x, y = 16, 16
     ax = axes[2]
     ax.set_xlim(0, 32)
@@ -539,52 +644,37 @@ def plot_sequence(sequence, predictions_set1, predictions_set2, true_speeds, tit
 
 
 def remove_borders(ax):
+    """
+    Remove top and right borders for a cleaner plot.
+    """
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
 
 
-import matplotlib.pyplot as plt
-import matplotlib.font_manager as font_manager
-
-import matplotlib.pyplot as plt
-import matplotlib.font_manager as font_manager
-
-
-
-# Plot comparison graphs with Roboto font applied
-import matplotlib.pyplot as plt
-import matplotlib.font_manager as font_manager
-
-
-
-# Plot comparison graphs with Roboto font applied
-import matplotlib.pyplot as plt
-import matplotlib.font_manager as font_manager
-
-
-
 def plot_comparison_graphs(linear_data, whole_data):
+    """
+    Plot comparison of RNN responses and MSE under constant and change conditions.
+    """
     rnn_linear_set1, rnn_linear_set2, mse_linear_set1, mse_linear_set2 = linear_data
     rnn_whole_set1, rnn_whole_set2, mse_whole_set1, mse_whole_set2 = whole_data
 
-    # Reorder the means to put constant first, then with change
+    # Averages and std errors
     rnn_means = [
-        np.mean(rnn_whole_set1), np.mean(rnn_whole_set2),  # Constant case
-        np.mean(rnn_linear_set1), np.mean(rnn_linear_set2)  # With change case
+        np.mean(rnn_whole_set1), np.mean(rnn_whole_set2),  # Constant
+        np.mean(rnn_linear_set1), np.mean(rnn_linear_set2)  # With change
     ]
     mse_means = [
-        np.mean(mse_whole_set1), np.mean(mse_whole_set2),  # Constant case
-        np.mean(mse_linear_set1), np.mean(mse_linear_set2)  # With change case
+        np.mean(mse_whole_set1), np.mean(mse_whole_set2),  # Constant
+        np.mean(mse_linear_set1), np.mean(mse_linear_set2)  # With change
     ]
 
-    # Reorder the errors accordingly
     rnn_errors = [
-        np.std(rnn_whole_set1) / np.sqrt(10), np.std(rnn_whole_set2) / np.sqrt(10),  # Constant case
-        np.std(rnn_linear_set1) / np.sqrt(10), np.std(rnn_linear_set2) / np.sqrt(10)  # With change case
+        np.std(rnn_whole_set1) / np.sqrt(10), np.std(rnn_whole_set2) / np.sqrt(10),
+        np.std(rnn_linear_set1) / np.sqrt(10), np.std(rnn_linear_set2) / np.sqrt(10)
     ]
     mse_errors = [
-        np.std(mse_whole_set1) / np.sqrt(10), np.std(mse_whole_set2) / np.sqrt(10),  # Constant case
-        np.std(mse_linear_set1) / np.sqrt(10), np.std(mse_linear_set2) / np.sqrt(10)  # With change case
+        np.std(mse_whole_set1) / np.sqrt(10), np.std(mse_whole_set2) / np.sqrt(10),
+        np.std(mse_linear_set1) / np.sqrt(10), np.std(mse_linear_set2) / np.sqrt(10)
     ]
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(30, 15))
@@ -592,7 +682,7 @@ def plot_comparison_graphs(linear_data, whole_data):
     x = np.arange(2)
     width = 0.35
 
-    # Ensure the font is available
+    # Font configuration
     font_path = '../misc/fonts/Roboto-Regular.ttf'
     font_manager.fontManager.addfont(font_path)
     plt.rcParams['font.family'] = 'Roboto'
@@ -603,12 +693,11 @@ def plot_comparison_graphs(linear_data, whole_data):
     plt.rcParams['axes.labelsize'] = 50
     plt.rcParams['legend.fontsize'] = 50
 
-    # First pair of bars (Constant)
+    # Bar plot for RNN responses
     rects1 = ax1.bar(x - width / 2, [rnn_means[0], rnn_means[2]], width, label='Motionnet-R',
                      yerr=[rnn_errors[0], rnn_errors[2]], capsize=5)
     rects2 = ax1.bar(x + width / 2, [rnn_means[1], rnn_means[3]], width, label='AdaptNet',
                      yerr=[rnn_errors[1], rnn_errors[3]], capsize=5)
-
     ax1.set_ylabel('Average RNN Response\n(arb. units)', fontsize=50)
     ax1.set_title('RNN Responses', fontsize=50)
     ax1.set_xticks(x)
@@ -619,7 +708,7 @@ def plot_comparison_graphs(linear_data, whole_data):
     ax1.spines['right'].set_visible(False)
     ax1.tick_params(axis='both', which='major', width=2, length=20)
 
-    # Second pair of bars
+    # Bar plot for MSE
     rects3 = ax2.bar(x - width / 2, [mse_means[0], mse_means[2]], width, label='Motionnet-R',
                      yerr=[mse_errors[0], mse_errors[2]], capsize=5)
     rects4 = ax2.bar(x + width / 2, [mse_means[1], mse_means[3]], width, label='AdaptNet',
@@ -639,6 +728,9 @@ def plot_comparison_graphs(linear_data, whole_data):
     plt.show()
 
 
+############################################
+# MAIN EXECUTION
+############################################
 
 def main():
     x_speed = 3
@@ -654,15 +746,15 @@ def main():
     timesteps_between_changes = 10
     change_speeds = [(-1, 2), (3, -1), (0, 3), (0, 3)]
 
+    # Generate a sample input sequence with changes
     input_sequence, change_points = generate_moving_dot_sequence(
         x_speed, y_speed, dot_radius, num_frames, im_height, im_width,
         change_mode, num_changes, timesteps_between_changes, change_speeds
     )
-
     print(f"Change points: {change_points}")
-
     input_sequence = input_sequence.to(device)
 
+    # Load multiple models
     num_models = 10
     models_set1 = []
     models_set2 = []
@@ -681,11 +773,13 @@ def main():
     x_combinations = list(itertools.product(range(speed_range[0], speed_range[1] + 1), repeat=num_changes + 1))
     y_combinations = list(itertools.product(range(speed_range[0], speed_range[1] + 1), repeat=num_changes + 1))
 
+    # Dictionaries to store results
     results_x_set1, results_y_set1 = {}, {}
     results_x_set2, results_y_set2 = {}, {}
     mse_x_set1, mse_y_set1 = {}, {}
     mse_x_set2, mse_y_set2 = {}, {}
 
+    # Arrays for different scenario categorizations
     mse_x_increasing_set1, mse_y_increasing_set1 = [], []
     mse_x_increasing_set2, mse_y_increasing_set2 = [], []
     mse_x_decreasing_set1, mse_y_decreasing_set1 = [], []
@@ -698,10 +792,10 @@ def main():
     total_rnn_responses_same_speed_set2 = []
 
     batch_size = 32
-
     total_combinations = len(x_combinations) * len(y_combinations)
     progress_bar = tqdm(total=total_combinations, desc="Processing combinations")
 
+    # Running simulations over large combination sets
     try:
         for i in range(0, len(x_combinations), batch_size):
             for j in range(0, len(y_combinations), batch_size):
@@ -713,35 +807,32 @@ def main():
                 true_speeds_x = []
                 true_speeds_y = []
 
+                # Generate sequences for each combination
                 for x_speeds, y_speeds in zip(x_batch, y_batch):
                     initial_speed = (x_speeds[0], y_speeds[0])
-                    change_speeds = list(zip(x_speeds[1:], y_speeds[1:]))
+                    changes = list(zip(x_speeds[1:], y_speeds[1:]))
 
                     input_sequence, _ = generate_moving_dot_sequence(
                         initial_speed[0], initial_speed[1], dot_radius, num_frames, im_height, im_width,
-                        change_mode=True, num_changes=len(change_speeds),
+                        change_mode=True, num_changes=len(changes),
                         timesteps_between_changes=timesteps_between_changes,
-                        change_speeds=change_speeds
+                        change_speeds=changes
                     )
                     batch_inputs.append(input_sequence)
 
-                    total_change_magnitude = sum(
-                        abs(x_speeds[k + 1] - x_speeds[k]) + abs(y_speeds[k + 1] - y_speeds[k]) for k in
-                        range(num_changes))
-                    total_change_magnitudes.append(total_change_magnitude)
+                    tcm = sum(abs(x_speeds[k + 1] - x_speeds[k]) + abs(y_speeds[k + 1] - y_speeds[k])
+                              for k in range(num_changes))
+                    total_change_magnitudes.append(tcm)
 
-                    true_x = np.array(
-                        [x_speeds[0]] + [speed for speed in x_speeds[1:] for _ in range(timesteps_between_changes)])[
-                             :num_frames]
-                    true_y = np.array(
-                        [y_speeds[0]] + [speed for speed in y_speeds[1:] for _ in range(timesteps_between_changes)])[
-                             :num_frames]
+                    true_x = np.array([x_speeds[0]] + [spd for spd in x_speeds[1:] for _ in range(timesteps_between_changes)])[:num_frames]
+                    true_y = np.array([y_speeds[0]] + [spd for spd in y_speeds[1:] for _ in range(timesteps_between_changes)])[:num_frames]
                     true_speeds_x.append(true_x)
                     true_speeds_y.append(true_y)
 
                 batch_inputs = torch.cat(batch_inputs, dim=0).to(device)
 
                 def process_batch(models):
+                    # Run batch through each model and gather predictions, MSE, etc.
                     all_predictions = []
                     all_mse_x = []
                     all_mse_y = []
@@ -755,6 +846,7 @@ def main():
                         all_predictions.append(predictions.cpu())
                         all_rnn_outs.append(rnn_outs.cpu())
 
+                        # Calculate MSE per sequence
                         mse_x = [calculate_mse(predictions[k, :, 0], torch.tensor(true_speeds_x[k], device=device),
                                                range(0, num_frames, timesteps_between_changes)[1:], window_size)
                                  for k in range(len(true_speeds_x))]
@@ -764,21 +856,16 @@ def main():
                         all_mse_x.append(mse_x)
                         all_mse_y.append(mse_y)
 
+                        # Whole sequence MSE and RNN responses
                         whole_mse_x = []
                         whole_mse_y = []
                         total_rnn_responses = []
                         for k in range(len(true_speeds_x)):
-                            pred_len = predictions.shape[1]
-                            true_len = len(true_speeds_x[k])
-                            min_len = min(pred_len, true_len)
-
-                            mse_x = torch.mean((predictions[k, :min_len, 0] - torch.tensor(true_speeds_x[k][:min_len],
-                                                                                           device=device)) ** 2).item()
-                            mse_y = torch.mean((predictions[k, :min_len, 1] - torch.tensor(true_speeds_y[k][:min_len],
-                                                                                           device=device)) ** 2).item()
-
-                            whole_mse_x.append(mse_x)
-                            whole_mse_y.append(mse_y)
+                            min_len = min(predictions.shape[1], len(true_speeds_x[k]))
+                            mse_x_val = torch.mean((predictions[k, :min_len, 0] - torch.tensor(true_speeds_x[k][:min_len], device=device)) ** 2).item()
+                            mse_y_val = torch.mean((predictions[k, :min_len, 1] - torch.tensor(true_speeds_y[k][:min_len], device=device)) ** 2).item()
+                            whole_mse_x.append(mse_x_val)
+                            whole_mse_y.append(mse_y_val)
 
                             total_rnn_response = torch.sum(torch.abs(rnn_outs[k, :min_len])).item()
                             total_rnn_responses.append(total_rnn_response)
@@ -789,18 +876,16 @@ def main():
 
                     all_predictions = torch.stack(all_predictions)
                     all_rnn_outs = torch.sum(torch.sum(torch.stack(all_rnn_outs), dim=3), dim=2)
-                    total_prediction_magnitudes_x = torch.sum(torch.abs(all_predictions[:, :, :, 0]), dim=2).numpy()
-                    total_prediction_magnitudes_y = torch.sum(torch.abs(all_predictions[:, :, :, 1]), dim=2).numpy()
+                    return (torch.sum(torch.abs(all_predictions[:, :, :, 0]), dim=2).numpy(),
+                            torch.sum(torch.abs(all_predictions[:, :, :, 1]), dim=2).numpy(),
+                            np.array(all_mse_x), np.array(all_mse_y), all_rnn_outs,
+                            np.array(all_whole_mse_x), np.array(all_whole_mse_y), np.array(all_total_rnn_responses))
 
-                    return total_prediction_magnitudes_x, total_prediction_magnitudes_y, np.array(all_mse_x), np.array(
-                        all_mse_y), all_rnn_outs, np.array(all_whole_mse_x), np.array(all_whole_mse_y), np.array(
-                        all_total_rnn_responses)
+                # Process batch for both sets of models
+                tpm_x_set1, tpm_y_set1, mse_x_set1_batch, mse_y_set1_batch, rnn_outs_set1, whole_mse_x_set1_batch, whole_mse_y_set1_batch, total_rnn_responses_set1_batch = process_batch(models_set1)
+                tpm_x_set2, tpm_y_set2, mse_x_set2_batch, mse_y_set2_batch, rnn_outs_set2, whole_mse_x_set2_batch, whole_mse_y_set2_batch, total_rnn_responses_set2_batch = process_batch(models_set2)
 
-                tpm_x_set1, tpm_y_set1, mse_x_set1_batch, mse_y_set1_batch, rnn_outs_set1, whole_mse_x_set1_batch, whole_mse_y_set1_batch, total_rnn_responses_set1_batch = process_batch(
-                    models_set1)
-                tpm_x_set2, tpm_y_set2, mse_x_set2_batch, mse_y_set2_batch, rnn_outs_set2, whole_mse_x_set2_batch, whole_mse_y_set2_batch, total_rnn_responses_set2_batch = process_batch(
-                    models_set2)
-
+                # Store results by total change magnitude
                 for idx, (x_speeds, y_speeds) in enumerate(zip(x_batch, y_batch)):
                     tcm = total_change_magnitudes[idx]
 
@@ -823,11 +908,10 @@ def main():
                         mse_x_set2[tcm] = [mse_x_set2_batch[:, idx]]
                         mse_y_set2[tcm] = [mse_y_set2_batch[:, idx]]
 
+                    # Identify scenarios and store data for analysis
                     if all(x_speeds[i] == y_speeds[i] for i in range(len(x_speeds))) and len(set(x_speeds)) == 1:
-                        whole_mse_same_speed_set1.append(
-                            whole_mse_x_set1_batch[:, idx] + whole_mse_y_set1_batch[:, idx])
-                        whole_mse_same_speed_set2.append(
-                            whole_mse_x_set2_batch[:, idx] + whole_mse_y_set2_batch[:, idx])
+                        whole_mse_same_speed_set1.append(whole_mse_x_set1_batch[:, idx] + whole_mse_y_set1_batch[:, idx])
+                        whole_mse_same_speed_set2.append(whole_mse_x_set2_batch[:, idx] + whole_mse_y_set2_batch[:, idx])
                         total_rnn_responses_same_speed_set1.append(total_rnn_responses_set1_batch[:, idx])
                         total_rnn_responses_same_speed_set2.append(total_rnn_responses_set2_batch[:, idx])
 
@@ -866,6 +950,7 @@ def main():
 
     print("Comprehensive analysis completed.")
 
+    # Compute averages for scenarios with changes
     mse_x_linear_set1 = mse_x_increasing_set1 + mse_x_decreasing_set1
     mse_y_linear_set1 = mse_y_increasing_set1 + mse_y_decreasing_set1
     mse_x_linear_set2 = mse_x_increasing_set2 + mse_x_decreasing_set2
@@ -931,17 +1016,19 @@ def main():
 
         if avg_total_rnn_responses_same_speed_set1 != 0:
             rnn_percentage_difference = (total_rnn_responses_difference / avg_total_rnn_responses_same_speed_set1) * 100
-            print(
-                f"Percentage difference of AdaptNet compared to Motionnet-R (RNN responses): {rnn_percentage_difference:.2f}%")
+            print(f"Percentage difference of AdaptNet compared to Motionnet-R (RNN responses): {rnn_percentage_difference:.2f}%")
         else:
             print("Cannot calculate percentage difference for RNN responses as Motionnet-R total response is zero.")
     else:
         print("\nNo cases found with Constant speed in all directions.")
 
     linear_data = (
-        rnn_lin_set1, rnn_lin_set2, (mse_x_linear_set1 + mse_y_linear_set1), (mse_x_linear_set2 + mse_y_linear_set2))
-    whole_data = (total_rnn_responses_same_speed_set1, total_rnn_responses_same_speed_set2, whole_mse_same_speed_set1,
-                  whole_mse_same_speed_set2)
+        rnn_lin_set1, rnn_lin_set2, (mse_x_linear_set1 + mse_y_linear_set1), (mse_x_linear_set2 + mse_y_linear_set2)
+    )
+    whole_data = (
+        total_rnn_responses_same_speed_set1, total_rnn_responses_same_speed_set2,
+        whole_mse_same_speed_set1, whole_mse_same_speed_set2
+    )
 
     plot_comparison_graphs(linear_data, whole_data)
 
@@ -962,8 +1049,6 @@ def main():
 
     # Perform t-tests
     print("\nPerforming t-tests:")
-
-    # Change case
     mse_change_set1 = np.concatenate(mse_x_linear_set1 + mse_y_linear_set1)
     mse_change_set2 = np.concatenate(mse_x_linear_set2 + mse_y_linear_set2)
     perform_t_test(mse_change_set1, mse_change_set2, "MSE (Change case)")
@@ -972,7 +1057,6 @@ def main():
     power_change_set2 = np.concatenate(rnn_lin_set2)
     perform_t_test(power_change_set1, power_change_set2, "Power (Change case)")
 
-    # Constant case
     mse_constant_set1 = np.concatenate(whole_mse_same_speed_set1)
     mse_constant_set2 = np.concatenate(whole_mse_same_speed_set2)
     perform_t_test(mse_constant_set1, mse_constant_set2, "MSE (Constant case)")
@@ -981,7 +1065,7 @@ def main():
     power_constant_set2 = np.concatenate(total_rnn_responses_same_speed_set2)
     perform_t_test(power_constant_set1, power_constant_set2, "Power (Constant case)")
 
-    font_path = '../../data/fonts/Roboto-Regular.ttf'  # Update this path
+    font_path = '../misc/fonts/Roboto-Regular.ttf'
     font_manager.fontManager.addfont(font_path)
     plt.rcParams['font.family'] = 'Roboto'
 
@@ -994,6 +1078,7 @@ def main():
         'axes.linewidth': 1
     })
 
+    # Plot final summary graphs
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(20, 12))
     fig.suptitle(f'Change Magnitude vs Prediction Magnitude and MSE (Window Size: {window_size})', fontsize=16)
 
@@ -1003,6 +1088,7 @@ def main():
     error_x_set1 = [se_x_set1.get(k, 0) for k in change_magnitudes_x]
     error_x_set2 = [se_x_set2.get(k, 0) for k in change_magnitudes_x]
 
+    # X Prediction Magnitude
     ax1.errorbar(change_magnitudes_x, prediction_magnitudes_x_set1, yerr=error_x_set1, fmt='o-', color='blue',
                  label='Motionnet-R', capsize=5)
     ax1.errorbar(change_magnitudes_x, prediction_magnitudes_x_set2, yerr=error_x_set2, fmt='s-', color='red',
@@ -1020,6 +1106,7 @@ def main():
     error_y_set1 = [se_y_set1.get(k, 0) for k in change_magnitudes_y]
     error_y_set2 = [se_y_set2.get(k, 0) for k in change_magnitudes_y]
 
+    # Y Prediction Magnitude
     ax2.errorbar(change_magnitudes_y, prediction_magnitudes_y_set1, yerr=error_y_set1, fmt='o-', color='green',
                  label='Motionnet-R', capsize=5)
     ax2.errorbar(change_magnitudes_y, prediction_magnitudes_y_set2, yerr=error_y_set2, fmt='s-', color='purple',
@@ -1031,14 +1118,15 @@ def main():
     ax2.legend()
     remove_borders(ax2)
 
-    mse_x_set1 = [avg_mse_x_set1.get(k, 0) for k in change_magnitudes_x]
-    mse_x_set2 = [avg_mse_x_set2.get(k, 0) for k in change_magnitudes_x]
+    mse_x_set1_vals = [avg_mse_x_set1.get(k, 0) for k in change_magnitudes_x]
+    mse_x_set2_vals = [avg_mse_x_set2.get(k, 0) for k in change_magnitudes_x]
     error_mse_x_set1 = [se_mse_x_set1.get(k, 0) for k in change_magnitudes_x]
     error_mse_x_set2 = [se_mse_x_set2.get(k, 0) for k in change_magnitudes_x]
 
-    ax3.errorbar(change_magnitudes_x, mse_x_set1, yerr=error_mse_x_set1, fmt='o-', color='blue', label='Motionnet-R',
+    # X MSE
+    ax3.errorbar(change_magnitudes_x, mse_x_set1_vals, yerr=error_mse_x_set1, fmt='o-', color='blue', label='Motionnet-R',
                  capsize=5)
-    ax3.errorbar(change_magnitudes_x, mse_x_set2, yerr=error_mse_x_set2, fmt='s-', color='red', label='AdaptNet',
+    ax3.errorbar(change_magnitudes_x, mse_x_set2_vals, yerr=error_mse_x_set2, fmt='s-', color='red', label='AdaptNet',
                  capsize=5)
     ax3.set_xlabel('Total Change Magnitude')
     ax3.set_ylabel('Average MSE')
@@ -1047,14 +1135,15 @@ def main():
     ax3.legend()
     remove_borders(ax3)
 
-    mse_y_set1 = [avg_mse_y_set1.get(k, 0) for k in change_magnitudes_y]
-    mse_y_set2 = [avg_mse_y_set2.get(k, 0) for k in change_magnitudes_y]
+    mse_y_set1_vals = [avg_mse_y_set1.get(k, 0) for k in change_magnitudes_y]
+    mse_y_set2_vals = [avg_mse_y_set2.get(k, 0) for k in change_magnitudes_y]
     error_mse_y_set1 = [se_mse_y_set1.get(k, 0) for k in change_magnitudes_y]
     error_mse_y_set2 = [se_mse_y_set2.get(k, 0) for k in change_magnitudes_y]
 
-    ax4.errorbar(change_magnitudes_y, mse_y_set1, yerr=error_mse_y_set1, fmt='o-', color='green', label='Motionnet-R',
+    # Y MSE
+    ax4.errorbar(change_magnitudes_y, mse_y_set1_vals, yerr=error_mse_y_set1, fmt='o-', color='green', label='Motionnet-R',
                  capsize=5)
-    ax4.errorbar(change_magnitudes_y, mse_y_set2, yerr=error_mse_y_set2, fmt='s-', color='purple', label='AdaptNet',
+    ax4.errorbar(change_magnitudes_y, mse_y_set2_vals, yerr=error_mse_y_set2, fmt='s-', color='purple', label='AdaptNet',
                  capsize=5)
     ax4.set_xlabel('Total Change Magnitude')
     ax4.set_ylabel('Average MSE')
