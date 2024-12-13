@@ -37,7 +37,7 @@ def load_data(filepath):
     return images, labels
 
 
-images, labels = load_data('../data/train_im32_till10_full_3.1')
+images, labels = load_data('../Training_Data/train_im32_till10_full.1')
 
 
 # Dataset class provides image and labels
@@ -50,6 +50,7 @@ class RegressionDataset(torch.utils.data.Dataset):
         self.labl = torch.FloatTensor(labl)
         self.toTrain = toTrain
         self.ftT = torch.FloatTensor(fts)
+        self.ftT = self.ftT/255
         self.indVal = 0
         if toTrain == 0:
             self.indVal = self.labl.size(0) - num_samples
@@ -367,7 +368,7 @@ class Model(nn.Module):
             hidden_size=rnn_units,
             nonlinearity='relu',
             batch_first=True,
-            adaptation_rate=0.2,
+            adaptation_rate=0.4,
             recovery_rate=0.1
         ).to(device)
         self.fc = nn.Linear(rnn_units, 2)
@@ -609,20 +610,20 @@ criterion = nn.MSELoss().to(device)
 loss_histories_n, trained_models_n = train_models(
     model_class=Model_n,
     num_models=10,
-    num_epochs=100,
+    num_epochs=30,
     train_loader=train_loader,
     criterion=criterion,
-    model_save_path='../models/motionnet_fu3_100epochs'
+    model_save_path='../Trained_Models/motionnet_full_30epochs_norm'
 )
 
 # Train second set of models (Model)
 loss_histories_adapt, trained_models_adapt = train_models(
     model_class=Model,
     num_models=10,
-    num_epochs=100,
+    num_epochs=30,
     train_loader=train_loader,
     criterion=criterion,
-    model_save_path='../models/adaptnet_fu3_100epochs',
+    model_save_path='../Trained_Models/adaptnet_full_30epochs_04_norm',
     is_adaptive=True
 )
 
@@ -681,6 +682,6 @@ plot_correlations(
 plot_training_loss(
     loss_histories_n=loss_histories_n,
     loss_histories_adapt=loss_histories_adapt,
-    num_epochs_n=100,
-    num_epochs_adapt=100
+    num_epochs_n=30,
+    num_epochs_adapt=30
 )

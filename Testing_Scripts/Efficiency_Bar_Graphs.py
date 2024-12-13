@@ -311,7 +311,7 @@ class Model(nn.Module):
                              hidden_size=rnn_units,
                              nonlinearity='relu',
                              batch_first=True,
-                             adaptation_rate=0.2,
+                             adaptation_rate=0.4,
                              recovery_rate=0.1).to(device)
         self.fc = nn.Linear(rnn_units, 2)
 
@@ -567,30 +567,43 @@ def plot_comparison_graphs(linear_data, whole_data):
     rnn_linear_set1, rnn_linear_set2, mse_linear_set1, mse_linear_set2 = linear_data
     rnn_whole_set1, rnn_whole_set2, mse_whole_set1, mse_whole_set2 = whole_data
 
-    rnn_means = [np.mean(rnn_linear_set1), np.mean(rnn_linear_set2), np.mean(rnn_whole_set1), np.mean(rnn_whole_set2)]
-    mse_means = [np.mean(mse_linear_set1), np.mean(mse_linear_set2), np.mean(mse_whole_set1), np.mean(mse_whole_set2)]
+    # Reorder the means to put constant first, then with change
+    rnn_means = [
+        np.mean(rnn_whole_set1), np.mean(rnn_whole_set2),  # Constant case
+        np.mean(rnn_linear_set1), np.mean(rnn_linear_set2)  # With change case
+    ]
+    mse_means = [
+        np.mean(mse_whole_set1), np.mean(mse_whole_set2),  # Constant case
+        np.mean(mse_linear_set1), np.mean(mse_linear_set2)  # With change case
+    ]
 
-    rnn_errors = [np.std(rnn_linear_set1) / np.sqrt(10), np.std(rnn_linear_set2) / np.sqrt(10),
-                  np.std(rnn_whole_set1) / np.sqrt(10), np.std(rnn_whole_set2) / np.sqrt(10)]
-    mse_errors = [np.std(mse_linear_set1) / np.sqrt(10), np.std(mse_linear_set2) / np.sqrt(10),
-                  np.std(mse_whole_set1) / np.sqrt(10), np.std(mse_whole_set2) / np.sqrt(10)]
+    # Reorder the errors accordingly
+    rnn_errors = [
+        np.std(rnn_whole_set1) / np.sqrt(10), np.std(rnn_whole_set2) / np.sqrt(10),  # Constant case
+        np.std(rnn_linear_set1) / np.sqrt(10), np.std(rnn_linear_set2) / np.sqrt(10)  # With change case
+    ]
+    mse_errors = [
+        np.std(mse_whole_set1) / np.sqrt(10), np.std(mse_whole_set2) / np.sqrt(10),  # Constant case
+        np.std(mse_linear_set1) / np.sqrt(10), np.std(mse_linear_set2) / np.sqrt(10)  # With change case
+    ]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(30, 15))  # Set figure size to 30x15
-    # fig.suptitle('Comparison of RNN Responses and MSE for Change and Constant Cases', fontsize=35)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(30, 15))
 
     x = np.arange(2)
     width = 0.35
+
     # Ensure the font is available
-    font_path = '../../data/fonts/Roboto-Regular.ttf'
+    font_path = '../misc/fonts/Roboto-Regular.ttf'
     font_manager.fontManager.addfont(font_path)
     plt.rcParams['font.family'] = 'Roboto'
-    plt.rcParams['font.size'] = 50  # Set all font sizes to 35
-    plt.rcParams['xtick.labelsize'] = 50  # X-axis tick labels
-    plt.rcParams['ytick.labelsize'] = 50  # Y-axis tick labels
-    plt.rcParams['axes.titlesize'] = 50  # Title size
-    plt.rcParams['axes.labelsize'] = 50  # X and Y labels
-    plt.rcParams['legend.fontsize'] = 50  # Legend font size
+    plt.rcParams['font.size'] = 50
+    plt.rcParams['xtick.labelsize'] = 50
+    plt.rcParams['ytick.labelsize'] = 50
+    plt.rcParams['axes.titlesize'] = 50
+    plt.rcParams['axes.labelsize'] = 50
+    plt.rcParams['legend.fontsize'] = 50
 
+    # First pair of bars (Constant)
     rects1 = ax1.bar(x - width / 2, [rnn_means[0], rnn_means[2]], width, label='Motionnet-R',
                      yerr=[rnn_errors[0], rnn_errors[2]], capsize=5)
     rects2 = ax1.bar(x + width / 2, [rnn_means[1], rnn_means[3]], width, label='AdaptNet',
@@ -599,13 +612,14 @@ def plot_comparison_graphs(linear_data, whole_data):
     ax1.set_ylabel('Average RNN Response\n(arb. units)', fontsize=50)
     ax1.set_title('RNN Responses', fontsize=50)
     ax1.set_xticks(x)
-    ax1.set_xticklabels(['With Change\n***', 'Constant\n***'], fontsize=50)
-    ax1.tick_params(axis='y', labelsize=50)  # Set y-axis tick label size
+    ax1.set_xticklabels(['Constant\n***', 'With Change\n***'], fontsize=50)
+    ax1.tick_params(axis='y', labelsize=50)
     ax1.legend(fontsize=50)
     ax1.spines['top'].set_visible(False)
     ax1.spines['right'].set_visible(False)
-    ax1.tick_params(axis='both', which='major', width=2, length=20)  # Add this line
+    ax1.tick_params(axis='both', which='major', width=2, length=20)
 
+    # Second pair of bars
     rects3 = ax2.bar(x - width / 2, [mse_means[0], mse_means[2]], width, label='Motionnet-R',
                      yerr=[mse_errors[0], mse_errors[2]], capsize=5)
     rects4 = ax2.bar(x + width / 2, [mse_means[1], mse_means[3]], width, label='AdaptNet',
@@ -613,15 +627,15 @@ def plot_comparison_graphs(linear_data, whole_data):
     ax2.set_ylabel('Average MSE\n(pixels per frame)', fontsize=50)
     ax2.set_title('Mean Squared Error', fontsize=35)
     ax2.set_xticks(x)
-    ax2.set_xticklabels(['With Change\n***', 'Constant\n***'], fontsize=50)
-    ax2.tick_params(axis='y', labelsize=50)  # Set y-axis tick label size
+    ax2.set_xticklabels(['Constant\n***', 'With Change\n***'], fontsize=50)
+    ax2.tick_params(axis='y', labelsize=50)
     ax2.legend(fontsize=50)
     ax2.spines['top'].set_visible(False)
     ax2.spines['right'].set_visible(False)
-    ax2.tick_params(axis='both', which='major', width=2, length=20)  # Add this line
+    ax2.tick_params(axis='both', which='major', width=2, length=20)
 
     plt.tight_layout()
-    plt.savefig('MSEpower_ver2.svg', format='svg')
+    plt.savefig('../Saved_Images/MSEpower_ver2.svg', format='svg')
     plt.show()
 
 
@@ -653,12 +667,12 @@ def main():
     models_set1 = []
     models_set2 = []
     for i in range(1, num_models + 1):
-        model1 = torch.load(f'../../models/motionnet_full_30epochs_{i}.pt', map_location=device)
+        model1 = torch.load(f'../Trained_Models/motionnet_full_30epochs_{i}.pt', map_location=device)
         model1.eval()
         model1.to(device)
         models_set1.append(model1)
 
-        model2 = torch.load(f'../../models/adaptnet_full_30epochs_{i}.pt', map_location=device)
+        model2 = torch.load(f'../Trained_Models/adaptnet_full_30epochs_{i}_04.pt', map_location=device)
         model2.eval()
         model2.to(device)
         models_set2.append(model2)
