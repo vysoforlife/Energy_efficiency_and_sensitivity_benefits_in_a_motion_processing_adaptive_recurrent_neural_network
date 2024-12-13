@@ -6,7 +6,7 @@ The Python code in this repository serves as a Key Resource for:
 
 This code can be used to train and test the two recurrent neural network models—**MotionNet-R** (baseline, non-adaptive) and **AdaptNet** (adaptive)—to reproduce the results presented in the manuscript.
 
-The training datasets (natural image sequences), as well as pre-trained networks and results files, can be found at: [LINK_TO_DATA]
+The training datasets (natural image sequences), as well as pre-trained networks and results files, can be found at: https://osf.io/pg7se/files/osfstorage/675bfc0197940e6cff87bbe1
 
 ---
 
@@ -36,7 +36,7 @@ If you have valid pre-trained instances of MotionNet-R or AdaptNet (e.g., 10 tra
 **Core components:**
 
 - **Testing scripts** (in `Testing_Scripts` directory):
-  - `Polar_Plots.py` : Reproduces figures related to directional tuning and plaid responses
+  - `Polar_Plots.py` : Reproduces figures related to sine and plaid responses
   - `Efficiency_Bar_Graphs.py` : Recreates bar plots comparing energy use and accuracy
   - `Sensitivity_Analysis.py` : Tests sensitivity of networks to changes in motion
   - `RNN_Activity.py` : Evaluates the networks for motion aftereffect-like responses and plots RNN activity to those stimuli as well
@@ -51,9 +51,9 @@ If you have valid pre-trained instances of MotionNet-R or AdaptNet (e.g., 10 tra
 
 Many testing scripts produce figures or data logs used to generate the final figures in the paper. These plots are saved in `Saved_Images`. For example:
 
-- `Polar_Plots.py` generates direction tuning plots (cf. Figures related to V1/MT tuning).
-- `Efficiency_Bar_Graphs.py` creates comparisons of metabolic efficiency and MSE (cf. efficiency results in the paper).
-- `Sensitivity_Analysis.py` outputs data that can be visualized as psychometric curves, demonstrating improved sensitivity to changing motion conditions.
+- `Polar_Plots.py` generates responses of MotionNet-R to sine and plaid stimuli (cf. Figures related to V1/MT tuning).
+- `Efficiency_Bar_Graphs.py` creates comparisons of RNN output and MSE (cf. efficiency results in the paper).
+- `Sensitivity_Analysis.py` outputs data that can be visualized as sensitivity matrices and fitted sigmoid curves, demonstrating improved sensitivity to changing motion conditions for AdaptNet.
 
 By following these steps and running the respective scripts, you can closely replicate the main findings presented in the manuscript.
 
