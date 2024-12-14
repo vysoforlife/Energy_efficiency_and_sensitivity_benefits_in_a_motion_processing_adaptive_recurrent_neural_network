@@ -2,7 +2,7 @@
 
 The Python code in this repository serves as a Key Resource for:
 
-**Rideaux & Mohan (2023) Energy efficiency and sensitivity benefits in a motion processing adaptive recurrent neural network**
+**Rideaux & Mohan (2024) Energy efficiency and sensitivity benefits in a motion processing adaptive recurrent neural network**
 
 This code can be used to train and test the two recurrent neural network models—**MotionNet-R** (baseline, non-adaptive) and **AdaptNet** (adaptive)—to reproduce the results presented in the manuscript.
 
