@@ -116,13 +116,6 @@ from matplotlib import font_manager
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
-# Your existing functions remain the same
-# (generate_moving_dot_sequences, analyze_rnn_responses, analyze_conv_responses,
-#  calculate_preferred_direction_speed, circular_mean, categorize_neurons,
-#  generate_single_sequence, process_sequence, SimpleRNN_n, Model_n)
-
-# Update the plot_histograms function to plot_combined_histograms
-
 
 def plot_combined_histograms(conv_directions, conv_speeds, rnn_directions, rnn_speeds):
     font_path = '../misc/fonts/Roboto-Regular.ttf'  # Update this path
@@ -159,7 +152,7 @@ def plot_combined_histograms(conv_directions, conv_speeds, rnn_directions, rnn_s
 
 def plot_histogram(ax, data, title, xlabel):
     if xlabel == 'Direction':
-        # Direction plotting remains the same
+        # Direction plotting 
         bins = np.linspace(0, 360, 9)
         width = (bins[1] - bins[0]) * 0.45
         for i, model_data in enumerate(data):
@@ -172,7 +165,6 @@ def plot_histogram(ax, data, title, xlabel):
         ax.set_xticklabels([f"{int(x)}°" for x in np.linspace(0, 315, 8)])
         ax.set_xlim(0, 360)
     else:
-        # Speed plotting with improved tick handling
         bins = np.logspace(np.log10(1), np.log10(7), 15)
         width_factor = 0.45
 
